@@ -1,0 +1,19 @@
+# Windows 构建前置条件
+
+当前源码和前端构建已完成，Windows Tauri 打包还需要微软 C++ 工具链。安装官方 Visual Studio Build Tools 时选择：
+
+- **Desktop development with C++**
+- MSVC x64/x86 build tools
+- Windows 10 或 Windows 11 SDK
+
+安装完成后，重新打开 PowerShell，在项目根目录执行：
+
+```powershell
+npm install
+npm run check
+npm run tauri:build
+```
+
+本机验证标准是 `where.exe link.exe` 能找到 MSVC 的 `link.exe`。如果仍找不到，可从“x64 Native Tools Command Prompt for VS”执行构建，或先运行 Visual Studio Installer 的“修复”。
+
+官方入口：<https://visualstudio.microsoft.com/visual-cpp-build-tools/>
