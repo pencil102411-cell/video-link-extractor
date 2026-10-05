@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    video_link_extractor::run();
+    video_link_extractor_lib::run();
 }
