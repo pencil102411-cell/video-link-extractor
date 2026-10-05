@@ -89,12 +89,7 @@ fn tools_dir(app: &AppHandle) -> PathBuf {
 }
 
 fn tool_path(app: &AppHandle, name: &str) -> PathBuf {
-    let candidate = tools_dir(app).join(name);
-    if candidate.exists() {
-        candidate
-    } else {
-        PathBuf::from(name)
-    }
+    tools_dir(app).join(name)
 }
 
 fn configure_hidden_window(command: &mut Command) {
@@ -125,15 +120,9 @@ fn run_version(path: &Path) -> Option<String> {
 fn inspect_tool(app: &AppHandle, name: &str, required: bool) -> DependencyStatus {
     let candidate = tool_path(app, name);
     let version = run_version(&candidate);
-    let path = if version.is_some() {
-        if candidate.exists() {
-            Some(candidate.to_string_lossy().to_string())
-        } else {
-            Some(format!("PATH: {name}"))
-        }
-    } else {
-        None
-    };
+    let path = version
+        .as_ref()
+        .map(|_| candidate.to_string_lossy().to_string());
 
     DependencyStatus {
         name: name.trim_end_matches(".exe").to_string(),
@@ -272,7 +261,7 @@ fn require_tool(app: &AppHandle, name: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "缺少运行时：{}，请先放入 tools 目录或加入系统 PATH",
+            "缺少运行时：{}，请先放入应用 tools 目录",
             name.trim_end_matches(".exe")
         ))
     }
