@@ -6,6 +6,8 @@
 - MSVC x64/x86 build tools
 - Windows 10 或 Windows 11 SDK
 
+安装器如果一直停留在“正在进行准备”，不代表组件已安装完成。等待安装器进入工作负载列表后，确认勾选 **Desktop development with C++**；命令行对应的工作负载 ID 是 `Microsoft.VisualStudio.Workload.VCTools`。
+
 安装完成后，重新打开 PowerShell，在项目根目录执行：
 
 ```powershell
