@@ -1,0 +1,10 @@
+# Use the sparse registry mirror for faster initial setup in mainland China.
+# Developers can remove this file to return to the default crates.io registry.
+[source.crates-io]
+replace-with = "rsproxy"
+
+[source.rsproxy]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[net]
+git-fetch-with-cli = true
