@@ -1,8 +1,8 @@
 [package]
-name = "app"
+name = "video_link_extractor"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Private local video link extractor"
+authors = ["Local Video Tool"]
 license = ""
 repository = ""
 edition = "2024"
@@ -11,7 +11,7 @@ rust-version = "1.90"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "app_lib"
+name = "video_link_extractor"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

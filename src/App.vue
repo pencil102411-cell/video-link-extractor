@@ -33,7 +33,7 @@ type VideoInfo = {
 
 type DownloadEvent = {
   taskId: string
-  state: 'downloading' | 'completed' | 'failed' | 'cancelled'
+  state: 'downloading' | 'processing' | 'completed' | 'failed' | 'cancelled'
   percent?: number
   speed?: string
   eta?: string
@@ -57,13 +57,15 @@ let unlisten: UnlistenFn | undefined
 const requiredDependencies = computed(() => dependencies.value.filter((item) => item.required))
 const missingDependencies = computed(() => requiredDependencies.value.filter((item) => !item.available))
 const canDownload = computed(
-  () => Boolean(info.value) && !busy.value && !missingDependencies.value.some((item) => item.name === 'yt-dlp'),
+  () => Boolean(info.value) && dependencies.value.length > 0 && !busy.value && missingDependencies.value.length === 0,
 )
 const progress = computed(() => Math.max(0, Math.min(100, lastEvent.value?.percent ?? 0)))
 const taskLabel = computed(() => {
   switch (lastEvent.value?.state) {
     case 'downloading':
       return '正在提取视频'
+    case 'processing':
+      return '正在合并视频'
     case 'completed':
       return '下载完成'
     case 'failed':
@@ -175,13 +177,13 @@ async function loadRuntimeState() {
 }
 
 onMounted(async () => {
-  await loadRuntimeState()
   if (isTauri()) {
     unlisten = await listen<DownloadEvent>('download://progress', (event) => {
       lastEvent.value = event.payload
-      if (event.payload.state !== 'downloading') busy.value = false
+      if (['completed', 'failed', 'cancelled'].includes(event.payload.state)) busy.value = false
     })
   }
+  await loadRuntimeState()
 })
 
 onUnmounted(() => unlisten?.())
