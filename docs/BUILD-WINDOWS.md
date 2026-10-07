@@ -18,7 +18,7 @@ npm run check
 npm run tauri:build
 ```
 
-截图中 `Missing script: "tauri:build"` 的原因是当前目录仍是 `C:\Users\人人租`，不是项目根目录。
+截图中 `Missing script: "tauri:build"` 的原因是当前目录仍是用户主目录，不是项目根目录。
 
 本机验证标准是 `where.exe link.exe` 能找到 MSVC 的 `link.exe`。如果仍找不到，可从“x64 Native Tools Command Prompt for VS”执行构建，或先运行 Visual Studio Installer 的“修复”。
 

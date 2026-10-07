@@ -51,6 +51,7 @@ h1 { font-size: 17px; letter-spacing: -0.04em; font-weight: 700; }
 .section-heading.compact h3 { font-size: 16px; }
 .step-chip { color: var(--orange); border-color: rgba(255, 113, 71, 0.3); }
 .field-label { display: block; margin: 28px 0 9px; color: #c1bab1; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; }
+.field-hint { margin: 9px 0 0; color: #847b72; font-size: 12px; line-height: 1.5; }
 .url-row, .path-row { display: flex; gap: 10px; }
 input, select { width: 100%; min-height: 48px; padding: 0 15px; color: var(--paper); background: #121110; border: 1px solid var(--line); border-radius: 10px; outline: none; transition: border-color 150ms ease, box-shadow 150ms ease; }
 input::placeholder { color: #5f5a55; }

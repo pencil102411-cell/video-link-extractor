@@ -44,6 +44,7 @@ struct FormatSummary {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VideoInfo {
+    resolved_url: String,
     title: String,
     duration: Option<f64>,
     thumbnail: Option<String>,
@@ -78,14 +79,37 @@ fn tools_dir(app: &AppHandle) -> PathBuf {
     let dev_tools = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("tools");
-    if dev_tools.exists() {
+    if cfg!(debug_assertions) && dev_tools.exists() {
         return dev_tools;
     }
 
-    app.path()
+    let resource_dir = app
+        .path()
         .resource_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("tools")
+        .unwrap_or_else(|_| PathBuf::from("."));
+    // Tauri resource mappings place the files under `$RESOURCES/tools`.
+    // Windows installers may resolve `$RESOURCES` to a `resources` child
+    // directory while placing mapped resources beside the executable. Keep
+    // both layouts, including the old `_up_/tools` location, compatible.
+    let mut candidates = vec![
+        resource_dir.join("tools"),
+        resource_dir.join("_up_").join("tools"),
+    ];
+    if let Some(parent) = resource_dir.parent() {
+        candidates.push(parent.join("tools"));
+        candidates.push(parent.join("_up_").join("tools"));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            candidates.push(parent.join("tools"));
+            candidates.push(parent.join("_up_").join("tools"));
+        }
+    }
+    candidates.push(dev_tools);
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
+        .unwrap_or_else(|| resource_dir.join("tools"))
 }
 
 fn tool_path(app: &AppHandle, name: &str) -> PathBuf {
@@ -101,20 +125,30 @@ fn configure_hidden_window(command: &mut Command) {
 }
 
 fn run_version(path: &Path) -> Option<String> {
-    let mut command = Command::new(path);
-    command.arg("--version");
-    configure_hidden_window(&mut command);
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
+    // yt-dlp and Deno use the GNU-style `--version`, while FFmpeg and
+    // FFprobe only accept the single-dash `-version` form. Try both so the
+    // bundled runtime check does not incorrectly report FFmpeg as missing.
+    for argument in ["--version", "-version"] {
+        let mut command = Command::new(path);
+        command.arg(argument);
+        configure_hidden_window(&mut command);
+        let Ok(output) = command.output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(version) = stdout
+            .lines()
+            .chain(stderr.lines())
+            .find(|line| !line.trim().is_empty())
+        {
+            return Some(version.trim().to_string());
+        }
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let version = stdout
-        .lines()
-        .chain(stderr.lines())
-        .find(|line| !line.trim().is_empty())?;
-    Some(version.trim().to_string())
+    None
 }
 
 fn inspect_tool(app: &AppHandle, name: &str, required: bool) -> DependencyStatus {
@@ -153,6 +187,89 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
                     .is_some_and(|mapped| is_blocked_ip(IpAddr::V4(mapped)))
         }
     }
+}
+
+fn is_url_boundary(character: char) -> bool {
+    matches!(
+        character,
+        '"' | '\''
+            | '`'
+            | '…'
+            | ','
+            | '.'
+            | '!'
+            | '?'
+            | ';'
+            | ':'
+            | '，'
+            | '。'
+            | '！'
+            | '？'
+            | '；'
+            | '：'
+            | '、'
+            | ')'
+            | ']'
+            | '}'
+            | '》'
+            | '】'
+            | '）'
+            | '」'
+            | '』'
+            | '”'
+            | '’'
+    )
+}
+
+fn is_url_terminator(character: char) -> bool {
+    character.is_whitespace()
+        || character.is_control()
+        || !character.is_ascii()
+        || matches!(character, '"' | '\'' | '`' | '}' | '》' | '】' | '）')
+}
+
+fn url_candidate_end(raw: &str, start: usize) -> usize {
+    let mut open_parentheses = 0;
+    for (index, character) in raw[start..].char_indices() {
+        if is_url_terminator(character) {
+            return index;
+        }
+        match character {
+            '(' => open_parentheses += 1,
+            ')' if open_parentheses > 0 => open_parentheses -= 1,
+            ')' => return index,
+            _ => {}
+        }
+    }
+    raw.len() - start
+}
+
+fn extract_first_url(raw: &str) -> Option<String> {
+    let lowered = raw.to_ascii_lowercase();
+    let mut offset = 0;
+    while offset < lowered.len() {
+        let next = ["https://", "http://"]
+            .into_iter()
+            .filter_map(|scheme| lowered[offset..].find(scheme).map(|index| offset + index))
+            .min();
+        let Some(start) = next else {
+            break;
+        };
+
+        let end = url_candidate_end(raw, start);
+        let candidate = raw[start..start + end].trim_matches(is_url_boundary);
+        if candidate.is_empty() {
+            offset = start + 1;
+            continue;
+        }
+        if let Ok(parsed) = Url::parse(candidate) {
+            if matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some() {
+                return Some(candidate.to_string());
+            }
+        }
+        offset = start + 1;
+    }
+    None
 }
 
 fn validate_url(raw: &str) -> Result<(), String> {
@@ -199,6 +316,57 @@ fn json_u64(value: &Value, key: &str) -> Option<u64> {
 
 fn json_f64(value: &Value, key: &str) -> Option<f64> {
     value.get(key).and_then(Value::as_f64)
+}
+
+fn is_xiaohongshu_host(host: &str) -> bool {
+    let normalized = host.trim_end_matches('.').to_ascii_lowercase();
+    normalized == "xiaohongshu.com" || normalized.ends_with(".xiaohongshu.com")
+}
+
+fn xhs_redirect_target(raw_error: &str) -> Option<String> {
+    for token in raw_error.split_whitespace() {
+        let candidate = token.trim_matches(|character: char| {
+            matches!(character, '"' | '\'' | ')' | ']' | '}' | ',' | '.')
+        });
+        let Ok(url) = Url::parse(candidate) else {
+            continue;
+        };
+        if !is_xiaohongshu_host(url.host_str().unwrap_or_default()) {
+            continue;
+        }
+        if url.path() != "/login" && !url.path().starts_with("/404") {
+            continue;
+        }
+        let Some(target) = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "redirectPath").then(|| value.into_owned()))
+        else {
+            continue;
+        };
+        let Ok(target_url) = Url::parse(&target) else {
+            continue;
+        };
+        if !matches!(target_url.scheme(), "http" | "https")
+            || !is_xiaohongshu_host(target_url.host_str().unwrap_or_default())
+            || !(target_url.path().starts_with("/discovery/item/")
+                || target_url.path().starts_with("/explore"))
+        {
+            continue;
+        }
+        return Some(target);
+    }
+    None
+}
+
+fn friendly_yt_dlp_error(error: &str) -> String {
+    let lowercase = error.to_ascii_lowercase();
+    if lowercase.contains("xiaohongshu.com/login")
+        || lowercase.contains("xiaohongshu.com/404")
+        || (lowercase.contains("redirectpath=") && lowercase.contains("xiaohongshu.com"))
+    {
+        return "该小红书页面无法公开解析，可能需要登录或链接已经失效。请确认链接在浏览器中可以直接打开。".to_string();
+    }
+    error.to_string()
 }
 
 fn format_summaries(info: &Value) -> Vec<FormatSummary> {
@@ -276,12 +444,10 @@ fn configure_js_runtime(app: &AppHandle, command: &mut Command) {
     }
 }
 
-#[tauri::command]
-fn inspect_url(app: AppHandle, url: String) -> Result<VideoInfo, String> {
-    validate_url(&url)?;
-    let executable = tool_path(&app, "yt-dlp.exe");
+fn inspect_with_yt_dlp(app: &AppHandle, url: &str) -> Result<Value, String> {
+    let executable = tool_path(app, "yt-dlp.exe");
     let mut command = Command::new(executable);
-    configure_js_runtime(&app, &mut command);
+    configure_js_runtime(app, &mut command);
     command.args([
         "--dump-single-json",
         "--skip-download",
@@ -289,7 +455,7 @@ fn inspect_url(app: AppHandle, url: String) -> Result<VideoInfo, String> {
         "--ignore-config",
         "--no-warnings",
         "--",
-        url.trim(),
+        url,
     ]);
     configure_hidden_window(&mut command);
     let output = command
@@ -304,9 +470,50 @@ fn inspect_url(app: AppHandle, url: String) -> Result<VideoInfo, String> {
         });
     }
 
-    let info: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("解析 yt-dlp 返回值失败：{error}"))?;
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("解析 yt-dlp 返回值失败：{error}"))
+}
+
+#[tauri::command]
+fn inspect_url(app: AppHandle, url: String) -> Result<VideoInfo, String> {
+    let input_url = extract_first_url(&url).ok_or_else(|| {
+        "未找到可识别的视频链接，请粘贴包含 http:// 或 https:// 的分享文本".to_string()
+    })?;
+    validate_url(&input_url)?;
+    let mut resolved_url = input_url;
+    let mut info = None;
+    let mut last_error = None;
+    for _ in 0..=1 {
+        match inspect_with_yt_dlp(&app, &resolved_url) {
+            Ok(value) => {
+                info = Some(value);
+                break;
+            }
+            Err(error) => {
+                last_error = Some(error.clone());
+                let Some(next_url) = xhs_redirect_target(&error) else {
+                    return Err(friendly_yt_dlp_error(&error));
+                };
+                if next_url == resolved_url {
+                    return Err(friendly_yt_dlp_error(&error));
+                }
+                validate_url(&next_url)?;
+                resolved_url = next_url;
+            }
+        }
+    }
+    let info = match info {
+        Some(value) => value,
+        None => {
+            return Err(friendly_yt_dlp_error(
+                last_error
+                    .as_deref()
+                    .unwrap_or("链接解析失败，请确认视频链接可用"),
+            ));
+        }
+    };
     Ok(VideoInfo {
+        resolved_url,
         title: json_string(&info, "title").unwrap_or_else(|| "未命名视频".to_string()),
         duration: json_f64(&info, "duration"),
         thumbnail: json_string(&info, "thumbnail"),
@@ -324,6 +531,10 @@ fn format_selector(profile: &str) -> &'static str {
         "720" => "bv*[height<=720]+ba/b[height<=720]/b",
         _ => "bv*+ba/b",
     }
+}
+
+fn output_path_spec(output_dir: &Path) -> String {
+    format!("home:{}", output_dir.display())
 }
 
 fn emit_event(app: &AppHandle, event: DownloadEvent) {
@@ -372,7 +583,10 @@ fn start_download(
     state: State<AppState>,
     request: DownloadRequest,
 ) -> Result<String, String> {
-    validate_url(&request.url)?;
+    let request_url = extract_first_url(&request.url).ok_or_else(|| {
+        "未找到可识别的视频链接，请粘贴包含 http:// 或 https:// 的分享文本".to_string()
+    })?;
+    validate_url(&request_url)?;
     require_tool(&app, "yt-dlp.exe")?;
     require_tool(&app, "ffmpeg.exe")?;
     require_tool(&app, "ffprobe.exe")?;
@@ -426,14 +640,12 @@ fn start_download(
         "--output",
         "%(title).200B [%(id)s].%(ext)s",
     ]);
-    command
-        .arg("--paths")
-        .arg(format!("home={}", output_dir.display()));
+    command.arg("--paths").arg(output_path_spec(&output_dir));
     if ffmpeg_dir.join("ffmpeg.exe").exists() {
         command.arg("--ffmpeg-location").arg(&ffmpeg_dir);
     }
     configure_js_runtime(&app, &mut command);
-    command.args(["--", request.url.trim()]);
+    command.args(["--", request_url.as_str()]);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     configure_hidden_window(&mut command);
     let mut child = match command.spawn() {
@@ -686,6 +898,29 @@ mod tests {
     }
 
     #[test]
+    fn extracts_first_url_from_copied_share_text() {
+        let copied = "黑蝙蝠中队，已准备起飞！2002年的旋律一响，DNA动了... https://xhslink.cn/o/2KqnhGIdSrI，先复制一下，再到浏览器打开";
+        assert_eq!(
+            extract_first_url(copied).as_deref(),
+            Some("https://xhslink.cn/o/2KqnhGIdSrI")
+        );
+    }
+
+    #[test]
+    fn rejects_copied_text_without_http_url() {
+        assert!(extract_first_url("只有分享说明，没有可用链接").is_none());
+    }
+
+    #[test]
+    fn preserves_query_parameters_and_balanced_parentheses() {
+        let copied = "参考链接（https://example.com/video(foo).mp4?a=1&b=2）";
+        assert_eq!(
+            extract_first_url(copied).as_deref(),
+            Some("https://example.com/video(foo).mp4?a=1&b=2")
+        );
+    }
+
+    #[test]
     fn rejects_local_and_non_http_urls() {
         for url in [
             "file:///C:/video.mp4",
@@ -716,6 +951,14 @@ mod tests {
     }
 
     #[test]
+    fn uses_yt_dlp_path_syntax_for_windows_output_directories() {
+        assert_eq!(
+            output_path_spec(Path::new(r"C:\Videos\Output")),
+            r"home:C:\Videos\Output"
+        );
+    }
+
+    #[test]
     fn parses_progress_events() {
         let parsed = parse_progress_line(
             "download:status=downloading|percent=42.5%|speed=2.1MiB/s|eta=00:03",
@@ -726,5 +969,50 @@ mod tests {
         assert_eq!(parsed.2.as_deref(), Some("2.1MiB/s"));
         assert_eq!(parsed.3.as_deref(), Some("00:03"));
         assert!(parse_progress_line("ordinary log line").is_none());
+    }
+
+    #[test]
+    fn extracts_xhs_redirect_target_from_ytdlp_error() {
+        let error = "ERROR: Unsupported URL: https://www.xiaohongshu.com/login?redirectPath=https%3A%2F%2Fwww.xiaohongshu.com%2Fdiscovery%2Fitem%2Fabc123%3Ffoo%3Dbar%26baz%3Dqux";
+        assert_eq!(
+            xhs_redirect_target(error).as_deref(),
+            Some("https://www.xiaohongshu.com/discovery/item/abc123?foo=bar&baz=qux")
+        );
+    }
+
+    #[test]
+    fn ignores_untrusted_or_unrelated_redirect_targets() {
+        assert!(xhs_redirect_target(
+            "https://evil.example/login?redirectPath=https%3A%2F%2Fwww.xiaohongshu.com%2Fdiscovery%2Fitem%2Fabc"
+        )
+        .is_none());
+        assert!(
+            xhs_redirect_target(
+                "https://www.xiaohongshu.com/login?redirectPath=https%3A%2F%2Fevil.example%2Fvideo"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn shortens_known_xhs_failures_to_actionable_message() {
+        let message = friendly_yt_dlp_error(
+            "ERROR: Unsupported URL: https://www.xiaohongshu.com/login?redirectPath=...",
+        );
+        assert!(message.contains("需要登录") || message.contains("链接已经失效"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn accepts_bundled_ffmpeg_version_flags() {
+        let tools = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tools");
+        if !tools.join("ffmpeg.exe").exists() || !tools.join("ffprobe.exe").exists() {
+            // Runtime binaries are intentionally excluded from the public source repository.
+            return;
+        }
+        assert!(run_version(&tools.join("ffmpeg.exe")).is_some());
+        assert!(run_version(&tools.join("ffprobe.exe")).is_some());
     }
 }

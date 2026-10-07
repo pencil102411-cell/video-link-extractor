@@ -30,3 +30,7 @@ src-tauri/gen
 # Local runtime binaries are supplied separately and are not committed.
 tools/*.exe
 tools/*.zip
+
+# Local acceptance outputs and installer diagnostics
+work/
+home=C#/

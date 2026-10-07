@@ -1,10 +1,9 @@
 [package]
 name = "video_link_extractor"
 version = "0.1.0"
-description = "Private local video link extractor"
-authors = ["Local Video Tool"]
-license = ""
-repository = ""
+description = "A local desktop video link extractor"
+authors = ["Video Link Extractor contributors"]
+license = "MIT"
 edition = "2024"
 rust-version = "1.90"
 

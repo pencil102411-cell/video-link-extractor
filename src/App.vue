@@ -21,6 +21,7 @@ type FormatSummary = {
 }
 
 type VideoInfo = {
+  resolvedUrl: string
   title: string
   duration?: number
   thumbnail?: string
@@ -92,6 +93,12 @@ function clearError() {
   errorMessage.value = ''
 }
 
+function handleUrlInput() {
+  info.value = null
+  lastEvent.value = null
+  clearError()
+}
+
 async function parseUrl() {
   clearError()
   info.value = null
@@ -136,7 +143,11 @@ async function startDownload() {
   lastEvent.value = null
   try {
     taskId.value = await invoke<string>('start_download', {
-      request: { url: url.value.trim(), outputDir: outputDir.value, profile: profile.value },
+      request: {
+        url: info.value.resolvedUrl || url.value.trim(),
+        outputDir: outputDir.value,
+        profile: profile.value,
+      },
     })
   } catch (error) {
     busy.value = false
@@ -223,14 +234,15 @@ onUnmounted(() => unlisten?.())
         <span class="step-chip">STEP 01 / 03</span>
       </div>
 
-      <label class="field-label" for="url">视频页面链接</label>
+      <label class="field-label" for="url">视频链接或分享文案</label>
       <div class="url-row">
-        <input id="url" v-model="url" type="url" placeholder="https://…" autocomplete="off" @keydown.enter="parseUrl" />
+        <input id="url" v-model="url" type="text" placeholder="粘贴视频链接或平台分享文字" autocomplete="off" @input="handleUrlInput" @keydown.enter="parseUrl" />
         <button class="primary-button" :disabled="parsing || !url.trim()" @click="parseUrl">
           {{ parsing ? '解析中…' : '解析链接' }}
           <span aria-hidden="true">↗</span>
         </button>
       </div>
+      <p class="field-hint">支持直接粘贴带说明文字的分享内容，解析时会自动提取其中的链接。</p>
 
       <div v-if="errorMessage" class="error-box" role="alert">{{ errorMessage }}</div>
 

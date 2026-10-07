@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "video-link-extractor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.local.video-link-extractor",
   "build": {
     "frontendDist": "../dist",
@@ -12,7 +12,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["../tools/*"],
+    "resources": {
+      "../tools/*": "tools/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
